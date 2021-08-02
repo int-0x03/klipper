@@ -115,25 +115,56 @@ class HandleStepQ:
         self.next_step_pos = self.last_step_pos = 0.
         self.cur_data = []
         self.data_pos = self.qs_interval = self.qs_count = self.qs_add = 0
-        self.step_dist = self.qs_dist = 0.
+        self.step_dist = self.qs_dist = self.prev_qs_dist = 0.
+
+        self.slope_start_time = self.slope_end_time = 0.
+        self.slope_start_pos = self.slope = 0.
+
         self.block_first_clock = 0
         self.block_first_time = self.block_last_time = self.inv_freq = 0.
     def get_description(self, name_parts):
         return {'label': '%s position' % (name_parts[1],),
                 'units': 'Position\n(mm)', 'func': self.pull_position}
     def pull_position(self, req_time):
+        smtime = .005
         while 1:
-            if req_time < self.next_step_time:
-                return self.last_step_pos
+            if req_time <= self.slope_end_time:
+                tdiff = req_time - self.slope_start_time
+                return self.slope_start_pos + tdiff * self.slope
+            if req_time <= self.next_step_time:
+                check_time = self.next_step_time - smtime
+                if req_time < check_time:
+                    self.slope_start_pos = self.last_step_pos
+                    self.slope_end_time = check_time
+                    self.slope = 0.
+                    continue
+                self.slope_end_time = self.next_step_time
+                self.slope_start_time = check_time
+                self.slope = .5 * self.qs_dist / smtime
+                self.slope_start_pos = self.last_step_pos
+                continue
             if self.qs_count:
                 self.last_step_pos = self.next_step_pos
                 self.qs_count -= 1
                 self.next_step_clock += self.qs_interval
                 self.qs_interval += self.qs_add
+                last_step_time = self.next_step_time
                 cdiff = self.next_step_clock - self.block_first_clock
                 tdiff = cdiff * self.inv_freq
                 self.next_step_time = self.block_first_time + tdiff
                 self.next_step_pos += self.qs_dist
+
+                tdiff = self.next_step_time - last_step_time
+                if tdiff <= 2. * smtime:
+                    self.slope_end_time = self.next_step_time
+                    self.slope = .5 * (self.prev_qs_dist + self.qs_dist) / tdiff
+                else:
+                    self.slope_end_time = last_step_time + smtime
+                    self.slope = .5 * self.prev_qs_dist / smtime
+                self.slope_start_time = last_step_time
+                self.slope_start_pos = self.last_step_pos - .5*self.prev_qs_dist
+                self.prev_qs_dist = self.qs_dist
+
                 continue
             # Must load and calc next step
             if req_time > self.block_last_time:
